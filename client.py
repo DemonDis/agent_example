@@ -213,19 +213,37 @@ class A2AOrchestrator:
         result = agent_result.get("result", {})
 
         if intent == "weather":
+            if isinstance(result, list):
+                return "\n".join(
+                    [
+                        f"  {i + 1}. {r.get('location')}: {r.get('condition')}, {r.get('temperature')}°C"
+                        for i, r in enumerate(result)
+                    ]
+                )
+            desc = result.get("description", "")
             return (
-                f"Погода в {result.get('location', 'неизвестно')}: "
-                f"{result.get('condition', 'N/A')}, "
+                f"{desc}\n"
+                f"  📍 {result.get('location', '?')}, "
                 f"{result.get('temperature', '?')}°C, "
+                f"{result.get('condition', '?')}, "
                 f"влажность {result.get('humidity', '?')}%"
             )
 
         elif intent == "finance":
+            if isinstance(result, list):
+                return "\n".join(
+                    [
+                        f"  {r.get('symbol')}: ${r.get('price')} ({r.get('change'):+.2f}, {r.get('change_percent'):+.2f}%)"
+                        for r in result
+                    ]
+                )
+            desc = result.get("description", "")
             return (
-                f"{result.get('symbol', 'N/A')}: "
-                f"${result.get('price', '?')} "
-                f"({result.get('change', '?'):+.2f}, "
-                f"{result.get('change_percent', '?'):+.2f}%)"
+                f"{desc}\n"
+                f"  {result.get('symbol')}: "
+                f"${result.get('price')} "
+                f"({result.get('change'):+.2f}, "
+                f"{result.get('change_percent'):+.2f}%)"
             )
 
         return str(result)

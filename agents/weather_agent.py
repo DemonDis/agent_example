@@ -1,4 +1,4 @@
-"""Weather Agent - A2A агент для предоставления погодной информации."""
+"""Weather Agent - A2A агент с LLM для генерации погодных данных."""
 
 import sys
 import os
@@ -7,26 +7,32 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
 import json
-import random
 from typing import Optional
+from agents.base_agent import BaseAgent
 
 
-class WeatherAgent:
-    """
-    Weather Agent - обрабатывает запросы связанные с погодой.
+class WeatherAgent(BaseAgent):
+    """Weather Agent - обрабатывает запросы связанные с погодой."""
 
-    В A2A архитектуре агент:
-    1. Регистрируется в MPC Server при старте
-    2. Слушает входящие A2A сообщения
-    3. Обрабатывает задачи и возвращает результаты
-    """
+    WEATHER_PROMPT = """Ты - метеорологический сервис. На основе данных о погоде сгенерируй реалистичный прогноз.
+
+Верни JSON с полями:
+- location: название города
+- temperature: температура в градусах Цельсия (число)
+- condition: состояние погоды (sunny/cloudy/rainy/partly cloudy/snowy/windy)
+- humidity: влажность в процентах (число)
+- description: краткое описание погоды на 1-2 предложения
+
+Пример: {"location": "Tokyo", "temperature": 18, "condition": "sunny", "humidity": 65, "description": "Ясно, без осадков"}"""
 
     def __init__(self, agent_id: str = "weather_agent_001", port: int = 9001):
+        super().__init__(
+            name="Weather Agent",
+            description="Provides weather forecasts and conditions",
+            keywords=["weather", "temperature", "forecast", "погода", "температура"],
+        )
         self.agent_id = agent_id
         self.port = port
-        self.name = "Weather Agent"
-        self.keywords = ["weather", "temperature", "forecast", "погода", "температура"]
-        self.description = "Provides weather forecasts and conditions"
         self._server: Optional[asyncio.Server] = None
 
     async def register_with_mpc(
@@ -51,46 +57,35 @@ class WeatherAgent:
             response = await reader.read(1024)
             result = json.loads(response.decode())
 
-            print(f"[Weather Agent] MPC registration: {result}")
+            print(f"[{self.name}] MPC registration: {result}")
             writer.close()
             await writer.wait_closed()
             return result.get("status") == "registered"
 
         except Exception as e:
-            print(f"[Weather Agent] Failed to register with MPC: {e}")
+            print(f"[{self.name}] Failed to register with MPC: {e}")
             return False
 
     def _generate_weather(self, location: str) -> dict:
-        """Генерация фейковых погодных данных."""
-        conditions = ["sunny", "cloudy", "rainy", "partly cloudy", "clear"]
-        temp_range = {
-            "tokyo": (15, 25),
-            "moscow": (5, 15),
-            "london": (8, 18),
-            "new york": (10, 22),
-        }
+        """Генерация погоды через LLM."""
+        user_prompt = f"Город: {location}"
 
-        loc_lower = location.lower()
-        temp_min, temp_max = (10, 25)
-        for city, (t_min, t_max) in temp_range.items():
-            if city in loc_lower:
-                temp_min, temp_max = t_min, t_max
-                break
+        result = self.generate_response(self.WEATHER_PROMPT, user_prompt)
 
-        return {
-            "location": location,
-            "temperature": random.randint(temp_min, temp_max),
-            "condition": random.choice(conditions),
-            "humidity": random.randint(40, 80),
-            "timestamp": "2024-03-22 15:00:00",
-        }
+        json_str = result
+        if "```json" in result:
+            json_str = result.split("```json")[1].split("```")[0]
+        elif "```" in result:
+            json_str = result.split("```")[1].split("```")[0]
+
+        return json.loads(json_str.strip())
 
     async def handle_request(self, request: dict) -> dict:
         """Обработка входящего A2A запроса."""
         task = request.get("task")
         params = request.get("params", {})
 
-        print(f"[Weather Agent] Processing task: {task}")
+        print(f"[{self.name}] Processing task: {task}")
 
         if task == "get_weather":
             location = params.get("location", "Unknown")
@@ -123,7 +118,7 @@ class WeatherAgent:
     ):
         """Обработка входящих A2A соединений."""
         addr = writer.get_extra_info("peername")
-        print(f"[Weather Agent] Connection from {addr}")
+        print(f"[{self.name}] Connection from {addr}")
 
         try:
             data = await reader.read(4096)
@@ -135,7 +130,7 @@ class WeatherAgent:
             await writer.drain()
 
         except Exception as e:
-            print(f"[Weather Agent] Error: {e}")
+            print(f"[{self.name}] Error: {e}")
             writer.write(json.dumps({"status": "error", "error": str(e)}).encode())
             await writer.drain()
         finally:
@@ -148,7 +143,7 @@ class WeatherAgent:
         self._server = await asyncio.start_server(
             self.handle_client, "localhost", self.port
         )
-        print(f"[Weather Agent] Listening on localhost:{self.port}")
+        print(f"[{self.name}] Listening on localhost:{self.port}")
         async with self._server:
             await self._server.serve_forever()
 

@@ -1,4 +1,4 @@
-"""Finance Agent - A2A агент для предоставления финансовой информации."""
+"""Finance Agent - A2A агент с LLM для генерации финансовых данных."""
 
 import sys
 import os
@@ -7,21 +7,44 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
 import json
-import random
 from typing import Optional
+from agents.base_agent import BaseAgent
 
 
-class FinanceAgent:
-    """
-    Finance Agent - обрабатывает запросы связанные с финансами.
-    """
+class FinanceAgent(BaseAgent):
+    """Finance Agent - обрабатывает запросы связанные с финансами."""
+
+    FINANCE_PROMPT = """Ты - финансовый сервис котировок. Сгенерируй реалистичные данные по акциям.
+
+Для одной акции верни JSON:
+- symbol: тикер (например AAPL, GOOGL)
+- price: текущая цена (число с 2 знаками после запятой)
+- change: изменение цены (число, может быть отрицательным)
+- change_percent: процент изменения (число)
+- description: краткое описание ситуации на рынке
+
+Пример: {"symbol": "AAPL", "price": 175.50, "change": 2.35, "change_percent": 1.36, "description": "Рост на фоне позитивных новостей"}"""
+
+    MARKET_SUMMARY_PROMPT = """Ты - финансовый сервис. Сгенерируй сводку по рынку акций.
+
+Верни МАССИВ JSON объектов для 5 акций: AAPL, GOOGL, MSFT, TSLA, AMZN.
+Каждый объект содержит:
+- symbol: тикер
+- price: цена
+- change: изменение
+- change_percent: процент
+- sector: сектор (Tech/Automotive/E-commerce)
+
+Пример: [{"symbol": "AAPL", "price": 175.50, "change": 2.35, "change_percent": 1.36, "sector": "Tech"}]"""
 
     def __init__(self, agent_id: str = "finance_agent_001", port: int = 9002):
+        super().__init__(
+            name="Finance Agent",
+            description="Stock quotes and financial data",
+            keywords=["stock", "finance", "market", "акции", "финансы", "price"],
+        )
         self.agent_id = agent_id
         self.port = port
-        self.name = "Finance Agent"
-        self.keywords = ["stock", "finance", "market", "акции", "финансы", "price"]
-        self.description = "Stock quotes and financial data"
         self._server: Optional[asyncio.Server] = None
 
     async def register_with_mpc(
@@ -46,53 +69,57 @@ class FinanceAgent:
             response = await reader.read(1024)
             result = json.loads(response.decode())
 
-            print(f"[Finance Agent] MPC registration: {result}")
+            print(f"[{self.name}] MPC registration: {result}")
             writer.close()
             await writer.wait_closed()
             return result.get("status") == "registered"
 
         except Exception as e:
-            print(f"[Finance Agent] Failed to register with MPC: {e}")
+            print(f"[{self.name}] Failed to register with MPC: {e}")
             return False
 
-    def _generate_stock_quote(self, symbol: str) -> dict:
-        """Генерация фейковых котировок."""
-        base_prices = {
-            "AAPL": 175.0,
-            "GOOGL": 140.0,
-            "MSFT": 380.0,
-            "TSLA": 250.0,
-            "AMZN": 175.0,
-        }
-        base = base_prices.get(symbol.upper(), 100.0)
-        price = round(base + random.uniform(-5, 5), 2)
+    def _generate_quote(self, symbol: str) -> dict:
+        """Генерация котировки через LLM."""
+        user_prompt = f"Акция: {symbol}"
+        result = self.generate_response(self.FINANCE_PROMPT, user_prompt)
 
-        return {
-            "symbol": symbol.upper(),
-            "price": price,
-            "change": round(random.uniform(-5, 5), 2),
-            "change_percent": round(random.uniform(-2, 2), 2),
-            "volume": random.randint(1000000, 10000000),
-        }
+        json_str = result
+        if "```json" in result:
+            json_str = result.split("```json")[1].split("```")[0]
+        elif "```" in result:
+            json_str = result.split("```")[1].split("```")[0]
+
+        return json.loads(json_str.strip())
+
+    def _generate_market_summary(self) -> list:
+        """Генерация сводки по рынку через LLM."""
+        result = self.generate_response(self.MARKET_SUMMARY_PROMPT, "Сгенерируй сводку")
+
+        json_str = result
+        if "```json" in result:
+            json_str = result.split("```json")[1].split("```")[0]
+        elif "```" in result:
+            json_str = result.split("```")[1].split("```")[0]
+
+        return json.loads(json_str.strip())
 
     async def handle_request(self, request: dict) -> dict:
         """Обработка входящего A2A запроса."""
         task = request.get("task")
         params = request.get("params", {})
 
-        print(f"[Finance Agent] Processing task: {task}")
+        print(f"[{self.name}] Processing task: {task}")
 
         if task == "get_quote":
             symbol = params.get("symbol", "UNKNOWN")
-            quote = self._generate_stock_quote(symbol)
+            quote = self._generate_quote(symbol)
             return {
                 "status": "success",
                 "result": quote,
             }
 
         elif task == "get_market_summary":
-            symbols = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN"]
-            quotes = [self._generate_stock_quote(s) for s in symbols]
+            quotes = self._generate_market_summary()
             return {
                 "status": "success",
                 "result": quotes,
@@ -109,7 +136,7 @@ class FinanceAgent:
     ):
         """Обработка входящих A2A соединений."""
         addr = writer.get_extra_info("peername")
-        print(f"[Finance Agent] Connection from {addr}")
+        print(f"[{self.name}] Connection from {addr}")
 
         try:
             data = await reader.read(4096)
@@ -121,7 +148,7 @@ class FinanceAgent:
             await writer.drain()
 
         except Exception as e:
-            print(f"[Finance Agent] Error: {e}")
+            print(f"[{self.name}] Error: {e}")
             writer.write(json.dumps({"status": "error", "error": str(e)}).encode())
             await writer.drain()
         finally:
@@ -134,7 +161,7 @@ class FinanceAgent:
         self._server = await asyncio.start_server(
             self.handle_client, "localhost", self.port
         )
-        print(f"[Finance Agent] Listening on localhost:{self.port}")
+        print(f"[{self.name}] Listening on localhost:{self.port}")
         async with self._server:
             await self._server.serve_forever()
 
