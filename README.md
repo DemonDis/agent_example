@@ -1,31 +1,51 @@
-# A2A Agent Discovery через MPC Server
+# A2A Agent System с MPC Discovery
 
 ## Концепция
 
-### Зачем нужен MPC Server в A2A архитектуре?
+### Что такое A2A?
 
-MPC (Multi-Party Computation) сервер в данном контексте играет роль **защищённого реестра/оркестратора**:
+A2A (Agent-to-Agent) — протокол коммуникации между агентами, где агенты могут:
+- Общаться напрямую друг с другом
+- Делегировать задачи другим агентам
+- Возвращать результаты запрашивающему агенту
 
+### Роль Registry (MPC-like)
+
+Registry играет роль **защищённого реестра** с MPC-подобным функционалом:
+- Агенты регистрируются анонимно
+- Discovery по хешированным capabilities (сервер не знает что ищет клиент)
+- Agents общаются напрямую после discovery
+
+## A2A Протокол
+
+### Message Envelope
+
+```json
+{
+    "message_id": "uuid",
+    "version": "1.0",
+    "msg_type": "task|result|error|delegate|capabilities_request",
+    "from": "weather_agent",
+    "to": "finance_agent",
+    "body": { "task": "...", "params": {...} },
+    "correlation_id": "uuid",
+    "timestamp": "ISO8601",
+    "reply_to": "orchestrator"
+}
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    MPC SERVER FUNCTIONS                          │
-├─────────────────────────────────────────────────────────────────┤
-│  1. AGENT REGISTRY      - Агенты регистрируются анонимно        │
-│  2. CAPABILITY MATCHING - MPC позволяет найти агента без        │
-│                           раскрытия ЧТО именно ищет клиент     │
-│  3. SECURE ROUTING      - Запрос передаётся без посредников  │
-│  4. RESULT AGGREGATION  - Агрегирует ответы от нескольких     │
-│                           агентов (если нужно)                 │
-└─────────────────────────────────────────────────────────────────┘
-```
 
-### Ключевое преимущество MPC:
+### Message Types
 
-Клиент делает запрос **"найди агента для погоды"** — но **MPC сервер не видит**:
-- Какой именно запрос (запрос зашифрован/разбит на доли)
-- Какие агенты доступны в системе (их список тоже разбит)
+| Type | Описание |
+|------|----------|
+| `TASK` | Задача для выполнения |
+| `RESULT` | Результат выполнения |
+| `ERROR` | Ошибка |
+| `DELEGATE` | Делегирование задачи |
+| `CAPABILITIES_REQUEST` | Запрос capabilities агента |
+| `HEARTBEAT` | Проверка доступности |
 
-### Архитектура с LLM
+## Архитектура
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -36,71 +56,66 @@ MPC (Multi-Party Computation) сервер в данном контексте и
 ┌──────────────────────────────────────────────────────────────────┐
 │                    ORCHESTRATOR / CLIENT                          │
 │  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────┐  │
-│  │  LLM Parser  │  │  MPC Discovery  │  │ Response Formatter │  │
-│  │  (из .env)   │  │     Client      │  │                    │  │
+│  │  LLM Parser │  │  Discovery      │  │ Response Formatter │  │
+│  │  (.env API) │  │  Client        │  │                    │  │
 │  └──────────────┘  └─────────────────┘  └────────────────────┘  │
 └─────────────────────────────┬────────────────────────────────────┘
                               │
               ┌───────────────┼───────────────┐
               ▼               ▼               ▼
 ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│   MPC SERVER     │ │  Weather Agent   │ │  Finance Agent   │
-│   (Registry)     │ │   (port 9001)   │ │   (port 9002)   │
-│   (port 9000)   │ │  + LLM (GPT)    │ │  + LLM (GPT)    │
+│   REGISTRY       │ │  Weather Agent   │ │  Finance Agent   │
+│   (port 9000)    │ │   (port 9001)   │ │   (port 9002)   │
+│                  │ │                  │ │                  │
+│  - Registration │ │  - A2A Server   │ │  - A2A Server   │
+│  - Discovery    │ │  - LLM (GPT)    │ │  - LLM (GPT)    │
+│  - MPC matching │ │  - Delegation   │ │  - Delegation   │
 └──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 
 ## Доступные агенты
 
-### Weather Agent (порт 9001)
-**Capabilities:** weather, temperature, forecast, погода, температура
+### Weather Agent (port 9001)
+- **Capabilities:** weather, temperature, forecast, погода
+- **Задачи:** `get_weather`, `get_forecast`
+- **LLM:** Генерирует реалистичные прогнозы
 
-**LLM:** Генерирует реалистичные прогнозы погоды
+### Finance Agent (port 9002)
+- **Capabilities:** stock, finance, market, акции, финансы
+- **Задачи:** `get_quote`, `get_market_summary`, `get_market_context`
+- **LLM:** Генерирует реалистичные котировки
 
-**Задачи:**
-| Задача | Параметры | Описание |
-|--------|-----------|----------|
-| `get_weather` | `location` | Текущая погода в городе |
-| `get_forecast` | `location` | Прогноз на 3 дня |
-
-### Finance Agent (порт 9002)
-**Capabilities:** stock, finance, market, акции, финансы, price
-
-**LLM:** Генерирует реалистичные котировки акций
-
-**Задачи:**
-| Задача | Параметры | Описание |
-|--------|-----------|----------|
-| `get_quote` | `symbol` | Котировка акции (AAPL, GOOGL, MSFT, TSLA, AMZN) |
-| `get_market_summary` | — | Сводка по всем акциям |
-
-## Схема взаимодействия
+## A2A Flow
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant T as Terminal (User)
-    participant C as Orchestrator/Client
-    participant MPC as MPC Server (Registry)
-    participant WA as WeatherAgent
-    participant FA as FinanceAgent
+    participant T as Terminal
+    participant O as Orchestrator
+    participant R as Registry
+    participant WA as Weather Agent
+    participant FA as Finance Agent
 
-    Note over T,MPC: FASE 1: Discovery
+    Note over T,FA: FLOW 1: Agent Discovery
 
-    T->>C: "Какая погода в Токио?"
-    C->>C: Parse: intent=weather
+    T->>O: "Погода в Токио?"
+    O->>O: LLM parse: intent=weather
+    O->>R: discovery(capability_hash)
+    R-->>O: agent_id, port
 
-    Note over C,MPC: MPC Query (зашифрованный)
-    C->>MPC: secure_query(capability_hash)
-    MPC-->>C: agent_id, endpoint
+    Note over T,FA: FLOW 2: A2A Task
 
-    Note over T,WA: FASE 2: A2A Communication
+    O->>WA: A2A TASK {task: "get_weather", params: {location: "Tokyo"}}
+    WA->>WA: LLM generates weather
 
-    C->>WA: A2A: {task: "get_weather", location: "Tokyo"}
-    WA->>WA: LLM generates weather data
-    WA-->>C: {status: "success", result: {...}}
+    Note over WA,FA: FLOW 3: Agent-to-Agent Delegation
 
-    C->>T: "В Tokyo ясно, +18°C..."
+    WA->>FA: DELEGATE {task: "get_market_context", location: "Tokyo"}
+    FA-->>WA: RESULT {market_data: [...]}
+
+    WA-->>O: RESULT {weather: {...}, finance_context: {...}}
+
+    O->>T: "В Tokyo ясно, +18°C..."
 ```
 
 ## Запуск
@@ -108,21 +123,21 @@ sequenceDiagram
 ### 1. Настройка .env
 ```bash
 cp .env.example .env
-# Заполните API_KEY в .env
+# Заполните API_KEY
 ```
 
-### 2. Создание виртуального окружения
+### 2. Установка зависимостей
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate 
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Запуск сервисов (в отдельных терминалах)
+### 3. Запуск сервисов
 
 ```bash
-# Терминал 1: MPC Server
-python mpc_server.py
+# Терминал 1: Registry Server
+python a2a_server.py
 
 # Терминал 2: Weather Agent
 python agents/weather_agent.py
@@ -142,16 +157,8 @@ python client.py
 >>> Температура около -5°C, влажность 75%.
 
 > Курс акций AAPL
->>> Apple показывает рост на фоне позитивного квартального отчёта.
+>>> Apple показывает рост на фоне позитивных новостей.
 >>> AAPL: $178.50 (+2.35, +1.33%)
-
-> Прогноз для Лондона на завтра
->>> Завтра в Лондоне ожидается дождливая погода.
->>> Температура 12°C, влажность 85%.
-
-> Рыночная сводка
->>> Обзор рынка: технологический сектор показывает рост.
->>> AAPL: $178.50 (+2.35), GOOGL: $142.30 (+1.85), MSFT: $380.20 (+3.10)...
 ```
 
 ## Структура проекта
@@ -160,27 +167,31 @@ python client.py
 agent_example/
 ├── README.md              # Документация
 ├── requirements.txt       # Зависимости
-├── .env                   # API ключи (не коммитится)
+├── .env                   # API ключи
 ├── .env.example           # Пример .env
-├── models.py              # Общие модели данных
+├── models.py              # A2A Protocol models
 ├── llm.py                 # LLM клиент для парсинга
-├── mpc_server.py          # MPC сервер (реестр агентов)
-├── client.py              # Orchestrator/терминальный клиент
+├── a2a_server.py          # A2A Server + Registry
+├── client.py              # A2A Orchestrator/Client
 └── agents/
     ├── __init__.py
-    ├── base_agent.py      # Базовый класс с LLM интеграцией
-    ├── weather_agent.py    # Weather Agent (LLM-powered)
-    └── finance_agent.py    # Finance Agent (LLM-powered)
+    ├── base_agent.py      # BaseA2AAgent с delegation
+    ├── weather_agent.py   # Weather Agent
+    └── finance_agent.py   # Finance Agent
 ```
 
-## Конфигурация .env
+## A2A Agent-to-Agent коммуникация
 
-```bash
-API_KEY=
-BASE_URL=
-LLM_NAME=
+Агенты могут делегировать задачи друг другу:
+
+```python
+# Weather Agent может запросить данные у Finance Agent
+result = await self.delegate_task(
+    "finance_agent",
+    "get_market_context",
+    {"location": location},
+    context={"source": "weather_agent"}
+)
 ```
 
-**Важно:** API_KEY используется для:
-1. LLM-парсинга запросов в Orchestrator
-2. Генерации данных в агентах (Weather, Finance)
+Это позволяет создавать сложные сценарии где несколько агентов работают together.
