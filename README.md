@@ -13,8 +13,8 @@ MPC (Multi-Party Computation) сервер в данном контексте и
 │  1. AGENT REGISTRY      - Агенты регистрируются анонимно        │
 │  2. CAPABILITY MATCHING - MPC позволяет найти агента без        │
 │                           раскрытия ЧТО именно ищет клиент     │
-│  3. SECURE ROUTING      - Запрос передаётся без посредников    │
-│  4. RESULT AGGREGATION  - Агрегирует ответы от нескольких       │
+│  3. SECURE ROUTING      - Запрос передаётся без посредников  │
+│  4. RESULT AGGREGATION  - Агрегирует ответы от нескольких     │
 │                           агентов (если нужно)                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -25,15 +25,37 @@ MPC (Multi-Party Computation) сервер в данном контексте и
 - Какой именно запрос (запрос зашифрован/разбит на доли)
 - Какие агенты доступны в системе (их список тоже разбит)
 
-Это критично когда:
-- Агенты содержат чувствительные capability-описания
-- Запросы клиента не должны быть видны даже серверу
-- Нужно доказательство того, что поиск был выполнен корректно
+### Архитектура с LLM
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                           TERMINAL                                │
+└─────────────────────────────┬────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    ORCHESTRATOR / CLIENT                          │
+│  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────┐  │
+│  │  LLM Parser  │  │  MPC Discovery  │  │ Response Formatter │  │
+│  │  (из .env)   │  │     Client      │  │                    │  │
+│  └──────────────┘  └─────────────────┘  └────────────────────┘  │
+└─────────────────────────────┬────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+│   MPC SERVER     │ │  Weather Agent   │ │  Finance Agent   │
+│   (Registry)     │ │   (port 9001)   │ │   (port 9002)   │
+│   (port 9000)   │ │  + LLM (GPT)    │ │  + LLM (GPT)    │
+└──────────────────┘ └──────────────────┘ └──────────────────┘
+```
 
 ## Доступные агенты
 
 ### Weather Agent (порт 9001)
 **Capabilities:** weather, temperature, forecast, погода, температура
+
+**LLM:** Генерирует реалистичные прогнозы погоды
 
 **Задачи:**
 | Задача | Параметры | Описание |
@@ -43,6 +65,8 @@ MPC (Multi-Party Computation) сервер в данном контексте и
 
 ### Finance Agent (порт 9002)
 **Capabilities:** stock, finance, market, акции, финансы, price
+
+**LLM:** Генерирует реалистичные котировки акций
 
 **Задачи:**
 | Задача | Параметры | Описание |
@@ -61,23 +85,22 @@ sequenceDiagram
     participant WA as WeatherAgent
     participant FA as FinanceAgent
 
-    Note over T,MPC: FASE 1: Discovery (найти подходящего агента)
+    Note over T,MPC: FASE 1: Discovery
 
-    T->>C: "Какая погода в Токио завтра?"
-    C->>C: Parse: intent=weather, location=Tokyo
+    T->>C: "Какая погода в Токио?"
+    C->>C: Parse: intent=weather
 
-    Note over C,MPC: MPC Query: найди агента с capability "weather"
-    C->>MPC: secure_query(capability="weather", encrypted_request)
-    MPC->>MPC: MPC computation (multi-party shuffle + match)
-    MPC-->>C: agent_id="weather_agent_001", endpoint="http://..."
+    Note over C,MPC: MPC Query (зашифрованный)
+    C->>MPC: secure_query(capability_hash)
+    MPC-->>C: agent_id, endpoint
 
-    Note over T,WA: FASE 2: Direct A2A Communication
+    Note over T,WA: FASE 2: A2A Communication
 
-    C->>WA: A2A Message: {task: "get_weather", location: "Tokyo"}
-    WA->>WA: Process request
-    WA-->>C: A2A Response: {temp: 18, condition: "sunny"}
+    C->>WA: A2A: {task: "get_weather", location: "Tokyo"}
+    WA->>WA: LLM generates weather data
+    WA-->>C: {status: "success", result: {...}}
 
-    C->>T: "В Токио завтра ожидается солнечная погода, +18°C"
+    C->>T: "В Tokyo ясно, +18°C..."
 ```
 
 ## Запуск
@@ -114,17 +137,21 @@ python client.py
 ## Примеры запросов
 
 ```
-> Какая погода в Токио?
->>> Погода в Tokyo: cloudy, 18°C, влажность 65%
+> Погода в Новосибирске
+>>> В Новосибирске ожидается переменная облачность, возможен небольшой снег.
+>>> Температура около -5°C, влажность 75%.
 
 > Курс акций AAPL
->>> AAPL: $172.45 (+1.23, +0.72%)
+>>> Apple показывает рост на фоне позитивного квартального отчёта.
+>>> AAPL: $178.50 (+2.35, +1.33%)
 
-> Покажи прогноз для Лондона
->>> Погода в London: sunny, 22°C, влажность 45%
+> Прогноз для Лондона на завтра
+>>> Завтра в Лондоне ожидается дождливая погода.
+>>> Температура 12°C, влажность 85%.
 
-> Какие акции есть на рынке?
->>> MSFT: $378.50, TSLA: $248.30, GOOGL: $138.75...
+> Рыночная сводка
+>>> Обзор рынка: технологический сектор показывает рост.
+>>> AAPL: $178.50 (+2.35), GOOGL: $142.30 (+1.85), MSFT: $380.20 (+3.10)...
 ```
 
 ## Структура проекта
@@ -136,11 +163,24 @@ agent_example/
 ├── .env                   # API ключи (не коммитится)
 ├── .env.example           # Пример .env
 ├── models.py              # Общие модели данных
-├── llm.py                  # LLM клиент для парсинга
+├── llm.py                 # LLM клиент для парсинга
 ├── mpc_server.py          # MPC сервер (реестр агентов)
 ├── client.py              # Orchestrator/терминальный клиент
 └── agents/
     ├── __init__.py
-    ├── weather_agent.py    # Weather Agent
-    └── finance_agent.py    # Finance Agent
+    ├── base_agent.py      # Базовый класс с LLM интеграцией
+    ├── weather_agent.py    # Weather Agent (LLM-powered)
+    └── finance_agent.py    # Finance Agent (LLM-powered)
 ```
+
+## Конфигурация .env
+
+```bash
+API_KEY=
+BASE_URL=
+LLM_NAME=
+```
+
+**Важно:** API_KEY используется для:
+1. LLM-парсинга запросов в Orchestrator
+2. Генерации данных в агентах (Weather, Finance)
