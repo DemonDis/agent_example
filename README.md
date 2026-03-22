@@ -1,1 +1,1 @@
-# agent_example
+# Agent Example: MCP + A2A + LLM
